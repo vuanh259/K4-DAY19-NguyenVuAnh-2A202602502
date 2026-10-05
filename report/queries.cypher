@@ -3,7 +3,7 @@ MATCH (n) RETURN labels(n)[0] AS label, count(*) AS n ORDER BY n DESC;
 
 // Q-B: kg_cross_kb.png
 MATCH p=(:Person)-[:INVOLVED_IN]->(:Case)-[:CHARGED_WITH]->(:Crime)<-[:DEFINES]-(:Article)
-RETURN p LIMIT 25;
+RETURN p LIMIT 10;
 
 // Q-D: kg_my_case.png. Kiểm tra tên sau khi build; chạy :clear trước mỗi ảnh.
 MATCH p=(:Person {name:'Cái Quang Huy'})-[:INVOLVED_IN]->(k:Case)-[:CHARGED_WITH]->(:Crime)<-[:DEFINES]-(:Article)
