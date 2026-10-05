@@ -2,7 +2,7 @@
 
 **Họ tên:** Nguyễn Vũ Anh  **MSSV:** 2A202602502  **Ngày:** 05/10/2026
 
-**Trạng thái:** benchmark `--judge` hoàn thành đủ 3 phần và 6 câu hỏi; đã lưu ảnh Neo4j Q-A, Q-B, Q-D tại `report/img/`.
+**Trạng thái:** benchmark `--judge` hoàn thành đủ 3 phần và 6 câu hỏi; có ảnh Neo4j Q-A, Q-B, Q-D tại `report/img/`, nhưng còn cần chụp lại toàn cửa sổ theo quy cách (xem cuối báo cáo).
 
 **Cấu hình benchmark:** chat dùng ModelAPI Responses (`gpt-6.1-sol`), embedding dùng Gemini (`gemini-embedding-001`); xem `SETUP_MODELAPI.md`. Số liệu dưới đây lấy từ `ket_qua_benchmark_kg.txt`. Chi phí và độ trễ không bao gồm các lần gọi LLM-as-judge.
 
@@ -36,6 +36,8 @@ Thông số lần chạy: `top_k=3`, `chunk_size=800`, 176 chunks, graph có 207
 
 **Chi phí tăng thêm đến từ đâu?** Flat indexing chỉ embedding bằng Gemini free tier nên được tính $0. Graph indexing thêm 20 lượt trích xuất tin bằng chat và tạo 120,426 input tokens; khi truy vấn, GraphRAG đưa thêm dữ kiện graph vào prompt, làm input trung bình tăng 2.11× và USD mỗi câu tăng 4.95×. Độ trễ Graph cao hơn do bước trích xuất khi dựng graph và prompt lớn hơn khi hỏi.
 
+**Giới hạn đo lường:** `0` token ở Flat indexing là giá trị fallback khi SDK embedding không cung cấp usage, không có nghĩa embedding không tiêu thụ token. Các tổng token chỉ gồm usage được báo về, chưa bao gồm token embedding bị thiếu. USD là ước tính theo đơn giá cấu hình: Gemini embedding free tier bằng 0; ModelAPI tính cả cached input với giá riêng. Đây là USD/credit danh nghĩa của gateway, không phải hóa đơn hoặc số tiền VND mua credit. Các tỷ lệ trên chỉ đúng với cấu hình và lần chạy này.
+
 ## 2. Từng câu hỏi (10 điểm)
 
 | Câu | Loại | Flat recall / judge | Graph recall / judge | Thắng | Vì sao (1 câu) |
@@ -51,11 +53,11 @@ Recall là tỷ lệ các từ khóa `must_include` có mặt; judge chấm 0–
 
 ## 3. Phân tích lỗi (20 điểm)
 
-Chọn ít nhất 2 nhóm lỗi trong E1–E6 (`LAB_GUIDE.md` Bước 8.4). Sao chép khung dưới đây cho mỗi lỗi.
+Phân tích hai nhóm E3 và E4, đối chiếu graph, bài nguồn và câu trả lời trong benchmark.
 
 ### Lỗi E3: Trùng thực thể vụ án
 
-- **Hiện tượng:** Cùng người Cái Quang Huy nối tới hai node `Case` có tên và tiêu đề khác nhau, dù hai bài báo mô tả vụ vận chuyển từ Đức qua Nội Bài.
+- **Hiện tượng:** Cùng người Cái Quang Huy nối tới hai node `Case` có tên khác nhau cho vụ vận chuyển từ Đức qua Nội Bài; một nguồn là bài chính, nguồn còn lại chứa đoạn giới thiệu tin liên quan.
 - **Bằng chứng:** truy vấn dưới đây trả về hai vụ riêng cho cùng người:
 
 ```cypher
@@ -71,25 +73,32 @@ Vụ vận chuyển hơn 9,6kg MDMA và gần 406g Ketamine qua sân bay Nội B
   news-100260918080821054
 ```
 
-- **Nguyên nhân:** `MERGE (k:Case {name: $name})` dùng tên do LLM sinh làm khóa; tiêu đề/tóm tắt khác nhau giữa bài báo khiến Neo4j tạo hai node.
-- **Đề xuất sửa:** giữ nguồn `doc_id` để truy vết, thêm bước entity resolution cho vụ án trùng nguồn bằng người, địa điểm, thời gian và chất/khối lượng; chỉ gộp khi có đủ bằng chứng để tránh gộp nhầm hai vụ khác nhau.
+- **Đối chiếu nguồn:** `news-100260917203001265` có tiêu đề “Từ mối quen biết tại nhà hàng ở Berlin đến những kiện hàng chứa hơn 10kg ma túy về Việt Nam”. `news-100260918080821054` có tiêu đề “Góp 14 triệu đồng mua ma túy rồi nói đã ‘rút lui’, 3 thanh niên kháng cáo kêu oan”; đoạn cuối bản crawl nhắc Huy, 9,6kg MDMA và gần 406g Ketamine như tin liên quan, không phải nội dung chính về ba thanh niên.
+- **Nguyên nhân:** dữ liệu crawl lẫn tin liên quan khiến LLM trích thêm vụ; `MERGE (k:Case {name: $name})` dùng tên do LLM sinh làm khóa nên hai cách diễn đạt tạo hai node. Đây là suy luận từ nội dung nguồn và cách tạo khóa trong code.
+- **Đề xuất sửa:** lọc phần tin liên quan trước khi trích xuất; giữ nguồn `doc_id` để truy vết, thêm entity resolution bằng người, địa điểm, thời gian và chất/khối lượng. Chỉ gộp khi đủ bằng chứng; kiểm tra lại benchmark sau thay đổi dữ liệu.
 
 ### Lỗi E4: Recall và judge đo khác nhau
 
-- **Hiện tượng:** Q6 có Flat recall `0.00` nhưng judge `1`; Graph recall `0.67` nhưng judge cũng `1`.
-- **Bằng chứng:** `data/benchmark_kg.json` đòi các từ khóa `Cái Quang Huy`, `Lê Minh Thành`, `Pháp y tâm thần`. Câu trả lời Flat nêu “Vụ Đạt…”, “Vụ Thành…” và “Vụ Đức…” nhưng không khớp nguyên văn từ khóa bắt buộc; câu trả lời Graph nêu Huy và Lê Minh Thành nhưng bỏ sót Pháp y tâm thần. Trong `ket_qua_benchmark_kg.txt`, judge cho cả hai câu Q6 điểm 1.
-- **Nguyên nhân:** recall là so khớp chuỗi cứng với toàn bộ `must_include`, nên cách gọi rút gọn hoặc câu trả lời đúng một phần có thể nhận 0. Judge đánh giá ngữ nghĩa và cho điểm một phần; cả hai đều phụ thuộc vào LLM.
+- **Hiện tượng:** Q3 Flat có recall `0.67` nhưng judge `2`, dù câu trả lời có đầy đủ mức án, điều luật và khung cơ bản.
+- **Bằng chứng nguyên văn** từ `ket_qua_benchmark_kg.txt`:
+
+> Lê Minh Thành bị tuyên **36 tháng tù** về tội **mua bán trái phép chất ma túy**. Tội này được quy định tại **Điều 251 Bộ luật Hình sự**; khung hình phạt cơ bản là **từ 2 năm đến 7 năm tù**.
+
+`must_include` của Q3 là `36 tháng`, `Điều 251`, `02 năm đến 07 năm`. Hai chuỗi đầu khớp; chuỗi cuối không khớp `2 năm đến 7 năm`, nên recall bằng `2/3 = 0.67`. Judge đánh giá ngữ nghĩa nên cho `2`.
+
+- **Bằng chứng bổ sung Q6:** Graph khớp `Cái Quang Huy` và `Lê Minh Thành`, không khớp `Pháp y tâm thần`, nên recall `0.67`, judge `1`. Tuy nhiên câu trả lời có nhắc Sầm Sơn và “các buồng điều trị”; thiếu chuỗi bắt buộc chưa đủ chứng minh thiếu toàn bộ vụ về mặt ngữ nghĩa. Câu trả lời còn lặp vụ Huy với hai tên khác nhau như E3.
+- **Nguyên nhân:** `keyword_recall` tính `sum(k.lower() in answer.lower() for k in keywords) / len(keywords)`, là phép đo xác định, không gọi LLM. Judge là một lượt gọi LLM riêng đánh giá ngữ nghĩa, có thể dao động. Recall không tự chuẩn hóa số có số 0 đầu hoặc tên gọi tương đương.
 - **Đề xuất sửa:** giữ cả hai phép đo, giải thích định nghĩa trong báo cáo và kiểm tra câu trả lời cùng đáp án chuẩn thủ công. Nếu cải tiến benchmark, chuẩn hóa alias và tách keyword thành các ý nghĩa cần có thay vì so chuỗi nguyên văn.
 
 ## 4. Kết luận (5 điểm)
 
-Flat RAG đủ cho single-hop (Q1–Q2: cả hai judge 2) và rẻ hơn rõ rệt. GraphRAG đáng cân nhắc cho câu hỏi xuyên KB hoặc multi-hop: thắng judge ở Q4–Q5, recall trung bình tăng từ 0.57 lên 0.94, nhưng chi phí mỗi câu tăng 4.95× và thời gian tăng 1.28×. Indexing Graph tốn thêm $0.15441 một lần; vì chi phí truy vấn Graph cũng cao hơn, không có điểm hòa vốn về tiền trong phép đo này — lựa chọn KG là đánh đổi chi phí lấy độ đầy đủ của câu trả lời xuyên KB. Q6 vẫn là hạn chế: Graph chưa tìm đủ mọi vụ MDMA và cả hai cách đo chỉ cho thấy câu trả lời đúng một phần.
+Flat RAG đủ cho single-hop trong bộ sáu câu này (Q1–Q2: cả hai judge 2) và rẻ hơn rõ rệt. GraphRAG đáng cân nhắc cho câu hỏi xuyên KB hoặc multi-hop: thắng judge ở Q4–Q5, recall trung bình tăng từ 0.57 lên 0.94, nhưng chi phí mỗi câu tăng 4.95× và thời gian tăng 1.28×. Indexing Graph tốn thêm $0.15441 một lần; vì chi phí truy vấn Graph cũng cao hơn, không có điểm hòa vốn về tiền trong phép đo này. Q6 chỉ đạt judge 1, có trùng vụ và thiếu keyword; cần đối chiếu từng vụ với nguồn trước khi kết luận độ bao phủ. Truy vấn MDMA trong `report/queries.cypher` trả về 5 node Case, còn câu trả lời liệt kê 4 mục; số node không đồng nghĩa số vụ thực tế do lỗi trùng và lẫn tin liên quan.
 
 ## 5. Tự kiểm (5 điểm)
 
 ```
 $ .venv\Scripts\python.exe -m pytest tests -q -p no:cacheprovider
-52 passed in 2.92s
+52 passed in 1.25s
 (chạy với -p no:cacheprovider để không ghi cache trong sandbox)
 
 $ python bench_kg.py --check
@@ -110,3 +119,5 @@ Graph check chỉ có luật + 1 bài báo; số liệu benchmark đầy đủ n
 ## Vấn đề gặp phải (không tính điểm)
 
 Benchmark hoàn tất sau khi bổ sung giới hạn tốc độ và retry cho embedding Gemini trong `src/llm.py`. Chi phí trong file benchmark không bao gồm judge; đơn giá gateway/embedding phụ thuộc cấu hình provider.
+
+**Ảnh còn cần bổ sung trước khi chấm:** ba ảnh hiện có thể hiện nội dung Neo4j nhưng chỉ chụp viewport, chưa có thanh trình duyệt như quy cách Bước 8.2. Công cụ chụp cửa sổ gặp lỗi `Computer Use native pipe is unavailable` và vẫn lỗi sau khi khởi động lại. Cần chụp nguyên cửa sổ trình duyệt cho Q-A, Q-B, Q-D, thấy ô truy vấn và Results overview, không cắt/chỉnh sửa; chạy `:clear` trước mỗi truy vấn. Đây là phần chưa hoàn tất quy cách nộp, không ảnh hưởng kết quả benchmark.

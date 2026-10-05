@@ -6,11 +6,11 @@
 - [x] Dùng ontology gợi ý (có thể chỉnh nhỏ)
 - [ ] Tự thiết kế (xét bonus +15, xem `SUBMISSION.md`)
 
-> Hướng dẫn: `LAB_GUIDE.md` Bước 2. Dùng ontology gợi ý thì vẫn phải điền đủ các mục dưới đây bằng lời của bạn.
+Ontology dùng 7 labels và 7 loại quan hệ theo gợi ý; Crime là node cầu nối giữa luật và tin. Không xét bonus tự thiết kế.
 
 ## 1. Sơ đồ
 
-Vẽ bằng mermaid (hoặc chèn ảnh `report/img/ontology.png`). Đánh dấu rõ **node cầu nối**.
+Sơ đồ quan hệ và node cầu nối Crime:
 
 ```mermaid
 flowchart LR
@@ -58,7 +58,7 @@ Article, Clause và Case mang doc_id. Person, Crime, Substance và Location đư
 
 ## 5. Competency questions
 
-Với mỗi câu trong `data/benchmark_kg.json`, ghi đường đi trên graph dùng để trả lời. Câu nào không trả lời được thì ghi rõ lý do.
+Các đường đi phục vụ sáu câu trong `data/benchmark_kg.json`; câu trả lời kết hợp graph với chunk vector.
 
 | Câu | Đường đi (Cypher pattern) | Trả lời được? |
 | --- | --- | --- |
@@ -71,7 +71,7 @@ Với mỗi câu trong `data/benchmark_kg.json`, ghi đường đi trên graph d
 
 ## 6. Quyết định thiết kế và đánh đổi
 
-Ít nhất 3 quyết định. Mỗi quyết định ghi: đã chọn gì, phương án khác là gì, vì sao chọn.
+Bốn quyết định chính và phương án thay thế:
 
 1. Regex cho luật và LLM cho tin: rẻ, ổn định với cấu trúc khoản. LLM cho cả hai linh hoạt hơn nhưng đắt và dễ thay đổi kết quả; regex phụ thuộc định dạng nguồn.
 2. Mức án trên cạnh Person → Case: giữ ngữ cảnh từng vụ, tốt hơn gắn lên người. Node Sentence riêng chi tiết hơn nhưng tăng độ phức tạp.
@@ -82,8 +82,33 @@ Với mỗi câu trong `data/benchmark_kg.json`, ghi đường đi trên graph d
 
 | Điểm khác | Gợi ý làm gì | Bạn làm gì | Vấn đề nó giải quyết | Bằng chứng (Cypher, hoặc số liệu benchmark) |
 | --- | --- | --- | --- | --- |
-| Không xét bonus | Giữ nguyên labels và quan hệ | Cải tiến retrieval, không thay ontology | Lấy đủ khoản và dữ kiện người của các vụ mở rộng | Cần benchmark thật để đo hiệu quả |
+| Không xét bonus | Giữ nguyên labels và quan hệ | Cải tiến retrieval, không thay ontology | Lấy đủ khoản và dữ kiện người của các vụ mở rộng | Benchmark Graph recall 0.94, judge 1.83; Q4–Q5 judge 2 so với Flat 1. Không có phép đo ablation để quy riêng hiệu quả cho cải tiến retrieval. |
 
 ## 8. Hạn chế còn lại
 
-Chưa chuẩn hóa đầy đủ tên đồng nghĩa Substance; chưa mô hình hóa điểm luật, ngưỡng, đơn vị và giai đoạn tố tụng. CHARGED_WITH phản ánh trích xuất, không chứng minh đã kết án. max_facts giới hạn số dòng, không giới hạn token. Cần đối chiếu labels/cạnh thực tế sau khi dựng đủ graph với API key.
+Chưa chuẩn hóa đầy đủ tên đồng nghĩa Substance; chưa mô hình hóa điểm luật, ngưỡng, đơn vị và giai đoạn tố tụng. CHARGED_WITH phản ánh trích xuất, không chứng minh đã kết án. max_facts giới hạn số dòng, không giới hạn token. Đã đối chiếu graph đầy đủ: 207 nodes / 392 relationships, đủ 7 labels và 7 loại quan hệ. Có Case trùng liên quan Cái Quang Huy và nội dung tin liên quan lẫn vào crawl; xem bằng chứng E3 trong REPORT_KG.md.
+
+
+## 9. Đối chiếu graph thực tế
+
+| Label | Số node |
+| --- | ---: |
+| Article | 18 |
+| Clause | 99 |
+| Crime | 13 |
+| Case | 18 |
+| Person | 36 |
+| Substance | 17 |
+| Location | 6 |
+
+| Relationship | Số cạnh |
+| --- | ---: |
+| DEFINES | 13 |
+| HAS_CLAUSE | 99 |
+| MENTIONS | 169 |
+| CHARGED_WITH | 22 |
+| INVOLVES | 29 |
+| LOCATED_IN | 15 |
+| INVOLVED_IN | 45 |
+
+Truy vấn Q-B có đường Person → Case → Crime ← Article; phép kiểm tra đường xuyên hai KB cho độ dài 2 cạnh từ Case đến Article. Số Case không bằng số bài báo: một bài có thể tạo nhiều vụ và nhiều nguồn có thể trùng vụ.
