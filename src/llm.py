@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import time
 from dataclasses import dataclass, fields
 from typing import Any
@@ -61,6 +62,19 @@ def price(model: str, input_tokens: int, output_tokens: int = 0) -> float:
     per_in, per_out = PRICES_PER_M.get(model.split("/")[-1], (0.0, 0.0))   # "openai/gpt-4o-mini" -> "gpt-4o-mini"
     return (input_tokens * per_in + output_tokens * per_out) / 1_000_000
 
+
+def configured_price(provider: str, kind: str, model: str, tokens_in: int,
+                     tokens_out: int = 0, cached_tokens: int = 0) -> float:
+    """Optional provider-specific rates, including cached input on gateways."""
+    prefix = f"{provider.upper()}_{kind.upper()}"
+    rate_in = os.getenv(f"{prefix}_INPUT_USD_PER_M")
+    if rate_in is None:
+        return price(model, tokens_in, tokens_out)
+    rate_out = float(os.getenv(f"{prefix}_OUTPUT_USD_PER_M", "0"))
+    rate_cached = float(os.getenv(f"{prefix}_CACHED_INPUT_USD_PER_M", rate_in))
+    cached = min(max(cached_tokens, 0), tokens_in)
+    return ((tokens_in - cached) * float(rate_in) + cached * rate_cached + tokens_out * rate_out) / 1_000_000
+
 def pick_provider(env_var: str, need_embeddings: bool) -> str:
     """Explicit env choice, else the first provider (in PROVIDER_ORDER) whose API key is set."""
     usable = [p for p in PROVIDER_ORDER if not need_embeddings or PROVIDERS[p]["embed"]]
@@ -89,7 +103,8 @@ def _openai_client(provider: str):
     from openai import OpenAI
 
     cfg = PROVIDERS[provider]
-    return OpenAI(api_key=os.environ[cfg["key"]], base_url=cfg["base_url"])
+    base_url = os.getenv(f"{provider.upper()}_BASE_URL", "").strip() or cfg["base_url"]
+    return OpenAI(api_key=os.environ[cfg["key"]], base_url=base_url)
 
 class MeteredLLM:
     """`chat` and `embed` are drop-in `llm_fn` / `embedding_fn`; `usage` accumulates across calls."""
@@ -100,10 +115,14 @@ class MeteredLLM:
         self.chat_model_id = os.getenv(f"{self.chat_provider.upper()}_CHAT_MODEL", PROVIDERS[self.chat_provider]["chat"])
         self.embed_model_id = os.getenv(f"{self.embed_provider.upper()}_EMBEDDING_MODEL",
                                         PROVIDERS[self.embed_provider]["embed"])
+        self.chat_api = os.getenv(f"{self.chat_provider.upper()}_CHAT_API", "chat_completions").strip()
+        if self.chat_api not in ("chat_completions", "responses"):
+            raise RuntimeError("CHAT_API phải là chat_completions hoặc responses")
         self.chat_model = f"{self.chat_provider}:{self.chat_model_id}"
         self.embedding_model = f"{self.embed_provider}:{self.embed_model_id}"
         self._backend_name = self.embedding_model
         self.usage = Usage()
+        self._last_embed_request = 0.0
         self._chat_client: Any
         self._embed_client: Any
         if self.chat_provider == "anthropic":
@@ -116,8 +135,23 @@ class MeteredLLM:
 
     def chat(self, prompt: str, json_mode: bool = False) -> str:
         start = time.perf_counter()
+        cached_tokens = 0
         if self.chat_provider == "anthropic":
             text, model, tokens_in, tokens_out = self._chat_anthropic(prompt)
+        elif self.chat_api == "responses":
+            # Codex gateways use Responses; do not send unsupported sampling
+            # parameters or assume support for Chat Completions response_format.
+            response = self._chat_client.responses.create(
+                model=self.chat_model_id,
+                input=prompt + ("\nChỉ trả về JSON hợp lệ, không dùng markdown." if json_mode else ""),
+                store=False,
+            )
+            text, model = response.output_text or "", self.chat_model_id
+            usage = response.usage
+            tokens_in = usage.input_tokens if usage else 0
+            tokens_out = usage.output_tokens if usage else 0
+            details = getattr(usage, "input_tokens_details", None)
+            cached_tokens = getattr(details, "cached_tokens", 0) or 0
         else:
             if json_mode and self.chat_provider != "gemini":
                 response = self._chat_client.chat.completions.create(
@@ -136,7 +170,9 @@ class MeteredLLM:
             usage = response.usage
             tokens_in = usage.prompt_tokens if usage else 0
             tokens_out = usage.completion_tokens if usage else 0
-        self.usage += Usage(1, tokens_in, tokens_out, price(model, tokens_in, tokens_out), time.perf_counter() - start)
+        self.usage += Usage(1, tokens_in, tokens_out,
+                            configured_price(self.chat_provider, "chat", model, tokens_in, tokens_out, cached_tokens),
+                            time.perf_counter() - start)
         return _strip_fences(text) if json_mode else text
 
     def _chat_anthropic(self, prompt: str) -> tuple[str, str, int, int]:
@@ -158,9 +194,33 @@ class MeteredLLM:
 
     def embed(self, text: str) -> list[float]:
         start = time.perf_counter()
-        response = self._embed_client.embeddings.create(model=self.embed_model_id, input=text)
+        from openai import RateLimitError
+
+        interval = float(os.getenv("GEMINI_EMBEDDING_MIN_INTERVAL", "0.8")) if self.embed_provider == "gemini" else 0.0
+        delay = interval - (time.perf_counter() - self._last_embed_request)
+        if delay > 0:
+            time.sleep(delay)
+        for attempt in range(4):
+            self._last_embed_request = time.perf_counter()
+            try:
+                response = self._embed_client.embeddings.create(model=self.embed_model_id, input=text)
+                break
+            except RateLimitError as error:
+                # Retry only a rate limit with a server-specified retry delay;
+                # a daily quota or billing exhaustion must still fail visibly.
+                body = error.body if isinstance(error.body, dict) else {}
+                payload = body.get("error", body)
+                details = payload.get("details", []) if isinstance(payload, dict) else []
+                retries = [d.get("retryDelay", "") for d in details
+                           if isinstance(d, dict) and d.get("@type", "").endswith("RetryInfo")]
+                match = re.fullmatch(r"(\d+(?:\.\d+)?)s", retries[0]) if retries else None
+                if attempt == 3 or not match or float(match.group(1)) > 55:
+                    raise
+                time.sleep(float(match.group(1)) + 1)
         tokens = getattr(response.usage, "prompt_tokens", 0) or 0   # some OpenAI-compatible APIs omit usage
-        self.usage += Usage(1, tokens, 0, price(self.embed_model_id, tokens), time.perf_counter() - start)
+        self.usage += Usage(1, tokens, 0,
+                            configured_price(self.embed_provider, "embedding", self.embed_model_id, tokens),
+                            time.perf_counter() - start)
         return [float(value) for value in response.data[0].embedding]
 
     __call__ = embed
