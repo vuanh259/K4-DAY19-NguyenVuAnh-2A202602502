@@ -2,7 +2,7 @@
 
 **Họ tên:** Nguyễn Vũ Anh  **MSSV:** 2A202602502  **Ngày:** 05/10/2026
 
-**Trạng thái:** benchmark `--judge` hoàn thành đủ 3 phần và 6 câu hỏi; có ảnh Neo4j Q-A, Q-B, Q-D tại `report/img/`, nhưng còn cần chụp lại toàn cửa sổ theo quy cách (xem cuối báo cáo).
+**Trạng thái:** benchmark `--judge` hoàn thành đủ 3 phần và 6 câu hỏi; đã chụp lại ảnh Neo4j Q-A, Q-B, Q-D tại `report/img/`, có khung trình duyệt, ô truy vấn và kết quả.
 
 **Cấu hình benchmark:** chat dùng ModelAPI Responses (`gpt-6.1-sol`), embedding dùng Gemini (`gemini-embedding-001`); xem `SETUP_MODELAPI.md`. Số liệu dưới đây lấy từ `ket_qua_benchmark_kg.txt`. Chi phí và độ trễ không bao gồm các lần gọi LLM-as-judge.
 
@@ -120,4 +120,4 @@ Graph check chỉ có luật + 1 bài báo; số liệu benchmark đầy đủ n
 
 Benchmark hoàn tất sau khi bổ sung giới hạn tốc độ và retry cho embedding Gemini trong `src/llm.py`. Chi phí trong file benchmark không bao gồm judge; đơn giá gateway/embedding phụ thuộc cấu hình provider.
 
-**Ảnh còn cần bổ sung trước khi chấm:** ba ảnh hiện có thể hiện nội dung Neo4j nhưng chỉ chụp viewport, chưa có thanh trình duyệt như quy cách Bước 8.2. Công cụ chụp cửa sổ gặp lỗi `Computer Use native pipe is unavailable` và vẫn lỗi sau khi khởi động lại. Cần chụp nguyên cửa sổ trình duyệt cho Q-A, Q-B, Q-D, thấy ô truy vấn và Results overview, không cắt/chỉnh sửa; chạy `:clear` trước mỗi truy vấn. Đây là phần chưa hoàn tất quy cách nộp, không ảnh hưởng kết quả benchmark.
+**Ảnh đã bổ sung:** ba ảnh đã được chụp lại với khung trình duyệt tích hợp trong VS Code, thấy thanh địa chỉ và ô truy vấn. Q-A có đủ 7 label; Q-B có Person, Case, Crime, Article và 3 loại cạnh trong Results overview; Q-D dùng Cái Quang Huy và có thêm Substance, Location. Mỗi ảnh chỉ có một khung kết quả.
